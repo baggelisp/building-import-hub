@@ -30,3 +30,17 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment (only .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# Supabase CLI / Firebase local state
+supabase/.temp/
+supabase/.branches/
+.firebase/
+
+# Playwright
+test-results/
+playwright-report/

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  ClientOnly,
   Outlet,
   Link,
   createRootRouteWithContext,
@@ -11,7 +12,6 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -40,9 +40,6 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
-  useEffect(() => {
-    reportLovableError(error, { boundary: "tanstack_root_error_component" });
-  }, [error]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -75,6 +72,8 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
   );
 }
 
+// One static <head> for every route: the prerendered shell is served for all paths, so any
+// per-route head content would differ from the HTML and break hydration (React #418/#520).
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
@@ -128,7 +127,11 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      {/* Pages render only in the browser. The static shell is prerendered once at "/" and served
+          for every path, so rendering a page during hydration would never match its HTML. */}
+      <ClientOnly>
+        <Outlet />
+      </ClientOnly>
       <Toaster />
     </QueryClientProvider>
   );
