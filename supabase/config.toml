@@ -1,1 +1,24 @@
-project_id = "svfcfhhjvweaexspekwe"
+project_id = "building-import-hub"
+
+[api]
+schemas = ["public"]
+max_rows = 1000
+
+[db]
+major_version = 17
+
+[auth]
+site_url = "http://localhost:8080"
+additional_redirect_urls = ["http://localhost:8080"]
+# Accounts are created by an administrator (scripts/provision-user.ts); there is no public sign-up.
+enable_signup = false
+minimum_password_length = 12
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+[functions.import-buildings]
+# The function verifies the caller's JWT itself (supabase.auth.getClaims), which works with
+# Supabase's asymmetric signing keys; the gateway check only understands the legacy secret.
+verify_jwt = false
