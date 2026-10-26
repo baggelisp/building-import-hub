@@ -16,23 +16,21 @@ import {
   resolveHeaders,
 } from "../_shared/buildings.ts";
 import { applySuggestions } from "../_shared/ai-mapping.ts";
+import { isAllowedOrigin, parseAllowList } from "../_shared/cors.ts";
 import { type AiOutcome, suggestMapping } from "./claude.ts";
 import { parseWorkbook, SheetError } from "./sheet.ts";
 
 const MAX_REPORTED = 500;
 
-const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
+const ALLOWED_ORIGINS = parseAllowList(Deno.env.get("ALLOWED_ORIGINS"));
 
 function corsHeaders(origin: string | null): HeadersInit {
   // Auth is a bearer token, never a cookie, so CORS is defence in depth rather than the gate.
   const allow =
     ALLOWED_ORIGINS.length === 0
       ? "*"
-      : origin && ALLOWED_ORIGINS.includes(origin)
-        ? origin
+      : isAllowedOrigin(origin, ALLOWED_ORIGINS)
+        ? origin!
         : "null";
   return {
     "Access-Control-Allow-Origin": allow,
