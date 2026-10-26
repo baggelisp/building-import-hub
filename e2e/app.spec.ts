@@ -3,7 +3,7 @@ import { read, utils } from "xlsx";
 import { clearBuildings, expect, hasAccount, signIn, test, workbook } from "./fixtures";
 
 test.describe("signed out", () => {
-  test("protected pages redirect to sign-in", async ({ page }) => {
+  test("/ and /buildings bounce a signed-out visitor to /auth", async ({ page }) => {
     await page.goto("/buildings");
     await expect(page).toHaveURL(/\/auth$/);
     await page.goto("/");
@@ -18,7 +18,7 @@ test.describe("signed out", () => {
     expect(await res.text()).toContain('http-equiv="Content-Security-Policy"');
   });
 
-  test("offers no public sign-up", async ({ page }) => {
+  test("the sign-in page has no way to create an account", async ({ page }) => {
     await page.goto("/auth");
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
     await expect(page.getByText(/sign up/i)).toHaveCount(0);
@@ -34,7 +34,10 @@ test.describe("signed out", () => {
 });
 
 test.describe("signed in", () => {
-  test.skip(!hasAccount, "Set E2E_EMAIL and E2E_PASSWORD to run signed-in tests.");
+  test.skip(
+    !hasAccount,
+    "Set TEST_ACCOUNT_EMAIL and TEST_ACCOUNT_PASSWORD to run signed-in tests.",
+  );
   test.beforeEach(async ({ page }) => {
     await clearBuildings();
     await signIn(page);
@@ -87,7 +90,9 @@ test.describe("signed in", () => {
     await expect(dialog.getByText("will be imported").locator("..")).toContainText("2");
     await dialog.getByText("Rows with errors (2)").click();
     await expect(dialog.getByText("Row 6 · Name is required.")).toBeVisible();
-    await expect(dialog.getByText("Row 7 · Floors must be a whole number.")).toBeVisible();
+    await expect(
+      dialog.getByText("Row 7 · Floors should be a whole number, like 12."),
+    ).toBeVisible();
 
     await dialog.getByRole("button", { name: "Import 2 buildings" }).click();
     await expect(page.getByText(/Imported 2 buildings/)).toBeVisible();
@@ -136,7 +141,7 @@ test.describe("signed in", () => {
     ).toBeVisible();
   });
 
-  test("rejects a file that is not a spreadsheet", async ({ page }) => {
+  test("a PNG renamed to .xlsx is refused with a readable message", async ({ page }) => {
     await page.getByRole("button", { name: "Import Excel" }).click();
     await page.getByLabel("Excel file").setInputFiles({
       name: "photo.xlsx",
@@ -146,6 +151,29 @@ test.describe("signed in", () => {
     await expect(
       page.getByRole("dialog").getByText(/could not be read as a spreadsheet|No column is mapped/),
     ).toBeVisible();
+  });
+
+  test("edits a row in place and validates like the import", async ({ page }) => {
+    await page.getByRole("button", { name: "Import Excel" }).click();
+    await page.getByLabel("Excel file").setInputFiles(
+      workbook("one.xlsx", [
+        ["name", "floors"],
+        ["Lighthouse", 3],
+      ]),
+    );
+    await page.getByRole("dialog").getByRole("button", { name: "Import 1 building" }).click();
+    await expect(page.getByRole("cell", { name: "Lighthouse", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit Lighthouse" }).click();
+    await page.getByLabel("Edit Floors").fill("three");
+    await page.getByLabel("Edit Floors").press("Enter");
+    await expect(page.getByText("Floors should be a whole number, like 12.")).toBeVisible();
+
+    await page.getByLabel("Edit Floors").fill("4");
+    await page.getByLabel("Edit City").fill("Chania");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("cell", { name: "Chania", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "4", exact: true })).toBeVisible();
   });
 
   test("search, delete with confirmation, and export", async ({ page }) => {

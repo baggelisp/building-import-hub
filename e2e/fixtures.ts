@@ -2,9 +2,9 @@ import { test as base, expect, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { utils, write } from "xlsx";
 
-export const E2E_EMAIL = process.env["E2E_EMAIL"] ?? "";
-export const E2E_PASSWORD = process.env["E2E_PASSWORD"] ?? "";
-export const hasAccount = E2E_EMAIL !== "" && E2E_PASSWORD !== "";
+export const ACCOUNT_EMAIL = process.env["TEST_ACCOUNT_EMAIL"] ?? "";
+export const ACCOUNT_PASSWORD = process.env["TEST_ACCOUNT_PASSWORD"] ?? "";
+export const hasAccount = ACCOUNT_EMAIL !== "" && ACCOUNT_PASSWORD !== "";
 
 /** Deletes every building of the e2e account, through the API and RLS like any user would. */
 export async function clearBuildings() {
@@ -14,8 +14,8 @@ export async function clearBuildings() {
     throw new Error("Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY for e2e cleanup.");
   const supabase = createClient(url, key, { auth: { persistSession: false } });
   const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: E2E_EMAIL,
-    password: E2E_PASSWORD,
+    email: ACCOUNT_EMAIL,
+    password: ACCOUNT_PASSWORD,
   });
   if (signInError) throw signInError;
   const { error } = await supabase.from("buildings").delete().not("id", "is", null);
@@ -36,8 +36,8 @@ export function workbook(name: string, rows: unknown[][]) {
 
 export async function signIn(page: Page) {
   await page.goto("/auth");
-  await page.getByLabel("Email").fill(E2E_EMAIL);
-  await page.getByLabel("Password").fill(E2E_PASSWORD);
+  await page.getByLabel("Email").fill(ACCOUNT_EMAIL);
+  await page.getByLabel("Password").fill(ACCOUNT_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Buildings", exact: true })).toBeVisible();
 }
