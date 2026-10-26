@@ -159,9 +159,16 @@ uses the template's columns, so an export can be re-imported.
 the build and the import still needed a server.
 
 **Dependencies came from a private registry.** `bun.lock` resolved every package from Lovable's
-own npm mirror. I switched to npm with the public registry. npm 10 then crashed while resolving
-the tree (`Cannot read properties of null (reading 'edgesOut')`); npm 11 installs it cleanly, so
-the lockfile is npm 11's and CI pins that version.
+own npm mirror. I switched to npm with the public registry, and getting a reproducible lockfile
+took three attempts:
+
+- npm 10 crashed while resolving the tree (`Cannot read properties of null (reading 'edgesOut')`).
+- An early npm 11 release (11.6) installed fine on my Mac, but in CI `npm ci` rejected the
+  lockfile it had just written: there were conflicting nested `ajv` versions, which came almost
+  entirely from `firebase-tools` as a dev dependency.
+- I dropped `firebase-tools` from the tree. It now runs as a pinned `npx firebase-tools@15.33.0`,
+  which also halves the install. Then I regenerated the lockfile with npm 11.21, which `npm ci`
+  accepts. CI pins that npm version.
 
 **SheetJS.** The npm registry stops at `xlsx` 0.18.5, which has two published advisories
 (prototype pollution and ReDoS when parsing crafted files). That matters for an endpoint that

@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm install -g npm@11.6.2 # the lockfile is npm 11's
+      - run: npm install -g npm@11.21.0 # the lockfile is npm 11's
       - run: npm ci
       - run: npm run format:check
       - run: npm run lint
@@ -87,7 +87,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm install -g npm@11.6.2
+      - run: npm install -g npm@11.21.0
       - run: npm ci
       - uses: actions/download-artifact@v7.0.0
         with:
@@ -98,7 +98,7 @@ jobs:
       # use the real Supabase project through the emulator-served build.
       - name: Playwright
         run: |
-          npx firebase emulators:exec --only hosting --project demo-ci "npx playwright test"
+          npx -y firebase-tools@15.33.0 emulators:exec --only hosting --project demo-ci "npx playwright test"
       - if: failure()
         uses: actions/upload-artifact@v7.0.2
         with:

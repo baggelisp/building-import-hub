@@ -14,8 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "serve:hosting": "firebase emulators:start --only hosting --project demo-buildings",
-    "deploy:hosting": "firebase deploy --only hosting"
+    "serve:hosting": "npx -y firebase-tools@15.33.0 emulators:start --only hosting --project demo-buildings",
+    "deploy:hosting": "npx -y firebase-tools@15.33.0 deploy --only hosting"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -92,7 +92,6 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "8.1.5",
-    "vitest": "^4.1.10",
-    "firebase-tools": "15.33.0"
+    "vitest": "^4.1.10"
   }
 }

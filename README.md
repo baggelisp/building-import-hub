@@ -33,7 +33,7 @@ URL serves the same prerendered `index.html` and the router runs in the browser.
 
 ## Run it locally
 
-Requirements: Node 22 with npm 11 (`npm i -g npm@11`), and for database tests Docker plus the
+Requirements: Node 22 with npm 11.21+ (`npm i -g npm@11.21.0`), and for database tests Docker plus the
 Supabase CLI.
 
 ```sh
@@ -76,7 +76,7 @@ Manual equivalent:
 ```sh
 supabase link --project-ref <ref> && supabase db push
 supabase functions deploy import-buildings --use-api
-npm run build && npx firebase deploy --only hosting
+npm run build && npm run deploy:hosting
 ```
 
 Edge Function settings (`supabase secrets set …`): `ALLOWED_ORIGINS` (comma-separated site
