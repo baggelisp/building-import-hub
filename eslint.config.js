@@ -45,5 +45,10 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    // Playwright fixtures call `use()` and need `({}, use)`; neither is React.
+    files: ["e2e/**/*.ts"],
+    rules: { "react-hooks/rules-of-hooks": "off", "no-empty-pattern": "off" },
+  },
   eslintPluginPrettier,
 );

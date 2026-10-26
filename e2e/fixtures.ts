@@ -6,8 +6,16 @@ export const ACCOUNT_EMAIL = process.env["TEST_ACCOUNT_EMAIL"] ?? "";
 export const ACCOUNT_PASSWORD = process.env["TEST_ACCOUNT_PASSWORD"] ?? "";
 export const hasAccount = ACCOUNT_EMAIL !== "" && ACCOUNT_PASSWORD !== "";
 
-/** Deletes every building of the e2e account, through the API and RLS like any user would. */
-export async function clearBuildings() {
+/**
+ * Several pipelines (CI, PR previews, release candidates, the production monitor) share one test
+ * account and may run at the same time. Each test therefore works only on rows whose name starts
+ * with its own random tag, and removes exactly those rows afterwards.
+ */
+export function newTag() {
+  return `t${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export async function deleteTagged(tag: string) {
   const url = process.env["VITE_SUPABASE_URL"];
   const key = process.env["VITE_SUPABASE_PUBLISHABLE_KEY"];
   if (!url || !key)
@@ -18,7 +26,7 @@ export async function clearBuildings() {
     password: ACCOUNT_PASSWORD,
   });
   if (signInError) throw signInError;
-  const { error } = await supabase.from("buildings").delete().not("id", "is", null);
+  const { error } = await supabase.from("buildings").delete().ilike("name", `${tag} %`);
   if (error) throw error;
   await supabase.auth.signOut();
 }
@@ -42,8 +50,20 @@ export async function signIn(page: Page) {
   await expect(page.getByRole("heading", { name: "Buildings", exact: true })).toBeVisible();
 }
 
+/** Rows of the buildings table that belong to this test (the search box filters by tag). */
+export async function showOnly(page: Page, tag: string) {
+  await page.getByLabel("Search buildings").fill(tag);
+  return page.getByRole("row").filter({ hasText: tag });
+}
+
 /** Fails the test on any uncaught error or CSP violation, so a too-strict policy cannot ship. */
-export const test = base.extend<{ consoleGuard: void }>({
+export const test = base.extend<{ consoleGuard: void; tag: string }>({
+  // Signed-in tests use `tag`; its teardown removes whatever the test created.
+  tag: async ({}, use) => {
+    const tag = newTag();
+    await use(tag);
+    if (hasAccount) await deleteTagged(tag);
+  },
   consoleGuard: [
     async ({ page }, use) => {
       const problems: string[] = [];
