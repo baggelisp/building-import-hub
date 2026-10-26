@@ -1,0 +1,224 @@
+name: CI
+
+# Pull requests run everything below, including a live preview of the change. On main this file
+# runs as the first stage of deploy.yml, and the site it builds is the exact artifact released.
+on:
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Public client config: inlined into the bundle, and the CSP step needs the URL.
+env:
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  FIREBASE_TOOLS: firebase-tools@15.33.0
+
+jobs:
+  web:
+    name: Web app (format, lint, types, unit tests, build)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # provenance attestation (main only)
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.21.0 # the lockfile is npm 11's
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Built bundle contains no secret keys
+        run: |
+          if grep -rEo 'sb_secret_[A-Za-z0-9_-]{16,}|eyJhbGciOi[A-Za-z0-9._-]{40,}' dist/client; then
+            echo "::error::A secret key was inlined into the frontend bundle"; exit 1
+          fi
+      # One reproducible tarball is the unit everything downstream tests and deploys.
+      - name: Package the site
+        run: tar --sort=name --mtime='@0' --owner=0 --group=0 -czf site.tar.gz -C dist/client .
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: site.tar.gz
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: site
+          path: site.tar.gz
+          retention-days: 7
+
+  edge-function:
+    name: Edge Function (deno check, lint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: denoland/setup-deno@v2.0.5
+        with:
+          deno-version: 2.9.6
+      - run: deno check import-buildings/index.ts import-buildings/evals/mapping.eval.ts
+      - run: deno lint
+      - name: Vendored SheetJS matches its checksum
+        working-directory: supabase/functions/_shared/vendor/xlsx-0.20.3
+        run: sha256sum -c SHA256SUMS
+
+  workflows:
+    name: Workflows (actionlint + shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.7 -no-color
+
+  migrations:
+    name: Migration safety
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Applied migrations are never edited, renamed or deleted
+        run: |
+          changed=$(git diff --name-status --diff-filter=MDR "origin/${{ github.base_ref }}...HEAD" -- supabase/migrations)
+          if [ -n "$changed" ]; then
+            echo "::error::Migrations already on ${{ github.base_ref }} must not change. Add a new migration instead:"
+            echo "$changed"; exit 1
+          fi
+      - name: New migrations pass Squawk (locks, timeouts, destructive changes)
+        run: |
+          git diff --name-only --diff-filter=A "origin/${{ github.base_ref }}...HEAD" -- 'supabase/migrations/*.sql' > added.txt
+          # Drop baseline files listed in .squawk.toml (Squawk exits non-zero if all inputs are excluded).
+          python3 - <<'EOF' > lint.txt
+          import fnmatch, tomllib
+          baseline = tomllib.load(open(".squawk.toml", "rb")).get("excluded_paths", [])
+          for path in open("added.txt").read().split():
+              if not any(fnmatch.fnmatch(path, p) for p in baseline):
+                  print(path)
+          EOF
+          if [ ! -s lint.txt ]; then echo "No new migrations to lint."; exit 0; fi
+          cat lint.txt
+          xargs npx -y squawk-cli@2.68.0 < lint.txt
+
+  database:
+    name: Database (migrations from scratch + pgTAP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: supabase/setup-cli@v3.0.1
+        with:
+          version: 2.62.10
+      # Applies every migration to an empty database, then runs supabase/tests/database.
+      - run: supabase db start
+      - run: supabase test db
+
+  e2e:
+    name: End-to-end (Firebase emulator)
+    needs: web
+    runs-on: ubuntu-latest
+    env:
+      TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
+      TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.21.0
+      - run: npm ci
+      - uses: actions/download-artifact@v7.0.0
+        with:
+          name: site
+      - run: mkdir -p dist/client && tar -xzf site.tar.gz -C dist/client
+      - run: npx playwright install --with-deps chromium
+      # Signed-in tests run when the test-account secrets exist; they use the real backend.
+      - run: npx -y "$FIREBASE_TOOLS" emulators:exec --only hosting --project demo-ci "npx playwright test"
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-report-emulator
+          path: playwright-report
+          retention-days: 7
+
+  preview:
+    name: Preview on Firebase (real hosting, full e2e)
+    # Same-repository PRs only: forks get no OIDC token, by design.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    env:
+      TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
+      TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.21.0
+      - run: npm ci
+      - uses: actions/download-artifact@v7.0.0
+        with:
+          name: site
+      - run: mkdir -p dist/client && tar -xzf site.tar.gz -C dist/client
+      # Keyless: GitHub's OIDC token is exchanged for a short-lived Google credential.
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Deploy to the PR's preview channel
+        id: channel
+        run: |
+          out=$(npx -y "$FIREBASE_TOOLS" hosting:channel:deploy "pr-${{ github.event.number }}" \
+                --expires 7d --project "${{ vars.FIREBASE_PROJECT_ID }}" --json)
+          url=$(jq -r '.result[] | .url' <<<"$out")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+      - run: npx playwright install --with-deps chromium
+      - name: Playwright against the preview
+        id: e2e
+        env:
+          APP_URL: ${{ steps.channel.outputs.url }}
+        run: npx playwright test
+      - name: Comment the preview on the PR
+        if: always() && steps.channel.outputs.url
+        uses: actions/github-script@v9.0.0
+        env:
+          URL: ${{ steps.channel.outputs.url }}
+          OUTCOME: ${{ steps.e2e.outcome }}
+        with:
+          script: |
+            const marker = "<!-- preview -->";
+            const ok = process.env.OUTCOME === "success";
+            const body = `${marker}\n**Preview:** ${process.env.URL} (expires in 7 days)\n\n` +
+              `End-to-end tests against it: ${ok ? "✅ passed" : "❌ failed"} · ` +
+              `commit ${context.sha.slice(0, 7)}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number });
+            const mine = comments.find((c) => c.body?.startsWith(marker));
+            if (mine) await github.rest.issues.updateComment({ ...context.repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-report-preview
+          path: playwright-report
+          retention-days: 7

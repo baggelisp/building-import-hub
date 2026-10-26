@@ -6,3 +6,11 @@ pnpm-lock.yaml
 package-lock.json
 bun.lock
 routeTree.gen.ts
+
+# Generated or vendored
+supabase/functions/_shared/vendor/
+src/routeTree.gen.ts
+package-lock.json
+dist/
+playwright-report/
+test-results/

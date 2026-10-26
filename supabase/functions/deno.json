@@ -1,0 +1,10 @@
+{
+  "workspace": ["./import-buildings"],
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "lint": {
+    "exclude": ["_shared/vendor/"]
+  }
+}

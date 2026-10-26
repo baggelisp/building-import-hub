@@ -1,0 +1,154 @@
+name: Deploy
+
+# Release path for main. Principles:
+#   - Build once: the site tarball CI built (and attested) is the only thing that is deployed.
+#   - Backend before frontend: migrations must keep the currently live site working
+#     (expand/contract), so the old site never meets a schema it cannot handle.
+#   - Test before traffic: the release goes to a `candidate` channel on real Firebase Hosting and
+#     must pass the smoke suite there before the very same version is released to live.
+#   - Undo is automatic: if live probes fail after the switch, the previous version is restored.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false # never interrupt a migration
+
+permissions:
+  contents: read
+
+env:
+  FIREBASE_TOOLS: firebase-tools@15.33.0
+  SITE: ${{ vars.FIREBASE_PROJECT_ID }}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      pull-requests: write
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://${{ vars.FIREBASE_PROJECT_ID }}.web.app
+    permissions:
+      contents: read
+      id-token: write
+      attestations: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
+      TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
+    steps:
+      - name: Every required setting is present (checked before anything changes)
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          missing=""
+          for name in SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_REF VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY \
+                      TEST_ACCOUNT_EMAIL TEST_ACCOUNT_PASSWORD SITE GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          [ -z "$missing" ] || { echo "::error::Missing deploy settings:$missing"; exit 1; }
+
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.21.0 && npm ci
+
+      - name: Fetch the site CI built
+        uses: actions/download-artifact@v7.0.0
+        with:
+          name: site
+      - name: Verify its provenance (built by this repository's CI, from this commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify site.tar.gz --repo "${{ github.repository }}" \
+            --source-digest "${{ github.sha }}" --signer-workflow "${{ github.repository }}/.github/workflows/ci.yml"
+          mkdir -p dist/client && tar -xzf site.tar.gz -C dist/client
+          grep -q "connect-src 'self' ${VITE_SUPABASE_URL}" dist/client/index.html \
+            || { echo "::error::The bundle's CSP does not target ${VITE_SUPABASE_URL}"; exit 1; }
+
+      # ---------- backend ----------
+      - uses: supabase/setup-cli@v3.0.1
+        with:
+          version: 2.62.10
+      - run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Apply migrations
+        run: supabase db push --include-all
+      - name: Deploy Edge Functions
+        run: supabase functions deploy import-buildings --use-api --project-ref "$SUPABASE_PROJECT_REF"
+
+      # ---------- frontend: candidate, test, promote ----------
+      - uses: google-github-actions/auth@v3.0.0
+        id: gcp
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - name: Deploy to the candidate channel
+        id: candidate
+        run: |
+          out=$(npx -y "$FIREBASE_TOOLS" hosting:channel:deploy candidate --expires 1d --project "$SITE" --json)
+          echo "url=$(jq -r '.result[] | .url' <<<"$out")" >> "$GITHUB_OUTPUT"
+      - run: npx playwright install --with-deps chromium
+      - name: Smoke suite against the candidate
+        env:
+          APP_URL: ${{ steps.candidate.outputs.url }}
+        run: npx playwright test --grep @smoke
+
+      - name: Promote the tested version to live
+        id: promote
+        env:
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
+        run: |
+          api=https://firebasehosting.googleapis.com/v1beta1/sites/$SITE/channels
+          auth="Authorization: Bearer $TOKEN"
+          previous=$(curl -fsS -H "$auth" "$api/live" | jq -r '.release.version.name')
+          tested=$(curl -fsS -H "$auth" "$api/candidate" | jq -r '.release.version.name')
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          curl -fsS -X POST -H "$auth" -H "content-type: application/json" \
+            "$api/live/releases?versionName=$tested" \
+            -d "{\"message\":\"${GITHUB_SHA::7} via ${GITHUB_RUN_ID}\"}" > /dev/null
+          echo "Released $tested (was $previous)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Probe live
+        id: probe
+        env:
+          LIVE: https://${{ vars.FIREBASE_PROJECT_ID }}.web.app
+        run: |
+          set -euo pipefail
+          headers=$(curl -fsSI "$LIVE/buildings")
+          grep -qi '^x-frame-options: DENY' <<<"$headers"
+          grep -qi '^cache-control: no-cache' <<<"$headers"
+          curl -fsS "$LIVE/" | grep -q "connect-src 'self' ${VITE_SUPABASE_URL}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "apikey: $VITE_SUPABASE_PUBLISHABLE_KEY" "$VITE_SUPABASE_URL/functions/v1/import-buildings")
+          test "$code" = 401 # anonymous imports are refused
+          APP_URL="$LIVE" npx playwright test --grep @smoke
+
+      - name: Roll back to the previous version
+        if: failure() && steps.promote.outcome == 'success'
+        env:
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
+          PREVIOUS: ${{ steps.promote.outputs.previous }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" \
+            "https://firebasehosting.googleapis.com/v1beta1/sites/$SITE/channels/live/releases?versionName=$PREVIOUS" \
+            -d "{\"message\":\"automatic rollback of ${GITHUB_SHA::7}\"}" > /dev/null
+          echo "::error::Live probes failed; restored $PREVIOUS" | tee -a "$GITHUB_STEP_SUMMARY"
