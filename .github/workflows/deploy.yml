@@ -30,6 +30,17 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
     steps:
+      - name: Every required setting is present (checked before anything changes)
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: |
+          missing=""
+          for name in SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_REF VITE_SUPABASE_URL \
+                      VITE_SUPABASE_PUBLISHABLE_KEY FIREBASE_SERVICE_ACCOUNT FIREBASE_PROJECT_ID; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          [ -z "$missing" ] || { echo "::error::Missing deploy settings:$missing"; exit 1; }
       - uses: actions/checkout@v7.0.1
       - uses: supabase/setup-cli@v3.0.1
         with:
