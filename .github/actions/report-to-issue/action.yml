@@ -1,0 +1,43 @@
+name: Report a check to an issue
+description: >
+  Keeps exactly one open issue per check. A failure opens it, or adds a comment if it is already
+  open; a success closes it with a note. So the issue list always shows what is broken right now.
+inputs:
+  title:
+    required: true
+  label:
+    required: true
+  failed:
+    required: true
+  details:
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@v9.0.0
+      env:
+        TITLE: ${{ inputs.title }}
+        LABEL: ${{ inputs.label }}
+        FAILED: ${{ inputs.failed }}
+        DETAILS: ${{ inputs.details }}
+      with:
+        script: |
+          const { TITLE, LABEL, FAILED, DETAILS } = process.env;
+          const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const { data: open } = await github.rest.issues.listForRepo({
+            ...context.repo, state: "open", labels: LABEL });
+          const issue = open[0];
+
+          if (FAILED === "true") {
+            const body = `Failed at ${new Date().toISOString()} — [run](${run})\n${DETAILS}`;
+            if (issue) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title: TITLE, labels: [LABEL], body });
+            }
+          } else if (issue) {
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: issue.number, body: `Passing again — [run](${run}). Closing.` });
+            await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: "closed" });
+          }

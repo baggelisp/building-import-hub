@@ -1,0 +1,103 @@
+name: Production checks
+
+# Production keeps being tested after it ships.
+#   synthetic (every 6 h): the @smoke suite against the live URL, as a real user would. A side
+#     benefit that matters on the free plan: Supabase pauses projects after a week without
+#     traffic, and these sign-ins keep it awake.
+#   drift (nightly): the live database schema and auth settings must equal what the repository
+#     says. Anything changed by hand in a dashboard shows up here.
+# Each check owns one GitHub issue: opened (or commented on) when it fails, closed when it passes.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+    inputs:
+      check:
+        type: choice
+        options: [synthetic, drift]
+        default: synthetic
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  synthetic:
+    if: github.event.schedule == '17 */6 * * *' || inputs.check == 'synthetic'
+    runs-on: ubuntu-latest
+    env:
+      APP_URL: https://${{ vars.FIREBASE_PROJECT_ID }}.web.app
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
+      TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.21.0 && npm ci
+      - run: npx playwright install --with-deps chromium
+      - id: run
+        run: npx playwright test --grep @smoke
+      - if: always()
+        uses: ./.github/actions/report-to-issue
+        with:
+          title: "Production synthetic check is failing"
+          label: production-synthetic
+          failed: ${{ steps.run.outcome == 'failure' }}
+
+  drift:
+    if: github.event.schedule == '43 2 * * *' || inputs.check == 'drift'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SITE_URL: https://${{ vars.FIREBASE_PROJECT_ID }}.web.app
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: supabase/setup-cli@v3.0.1
+        with:
+          version: 2.62.10
+      - run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - id: run
+        run: |
+          set -uo pipefail
+          problems=""
+
+          # Every migration in the repository is applied, and nothing else is.
+          supabase migration list --linked > migrations.txt
+          # Rows with a version on either side; a blank side means applied on one end only.
+          if awk -F'|' '$1 ~ /[0-9]{8}/ || $2 ~ /[0-9]{8}/ { l=$1; r=$2; gsub(/ /,"",l); gsub(/ /,"",r); if (l!=r) bad=1 } END { exit !bad }' migrations.txt; then
+            problems+=$'\n- Local and remote migration history differ:\n```\n'"$(cat migrations.txt)"$'\n```'
+          fi
+
+          # The live public schema equals the one the migrations produce.
+          diff=$(supabase db diff --linked --schema public 2>/dev/null)
+          if grep -qvE '^\s*(--.*)?$' <<<"$diff"; then
+            problems+=$'\n- Schema drift in `public` (SQL that would make the repo match live):\n```sql\n'"$diff"$'\n```'
+          fi
+
+          # Auth settings that the security model relies on.
+          auth=$(curl -fsS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/config/auth")
+          jq -e '.disable_signup == true' <<<"$auth" >/dev/null || problems+=$'\n- Public sign-up is enabled.'
+          jq -e '.password_min_length >= 12' <<<"$auth" >/dev/null || problems+=$'\n- Minimum password length is below 12.'
+          jq -e --arg u "$SITE_URL" '.site_url == $u' <<<"$auth" >/dev/null || problems+=$'\n- Auth site URL is not '"$SITE_URL"'.'
+
+          if [ -n "$problems" ]; then
+            { echo "details<<EOF"; echo "$problems"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            echo "$problems" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "No drift." >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: ./.github/actions/report-to-issue
+        with:
+          title: "Production configuration has drifted from the repository"
+          label: production-drift
+          failed: ${{ steps.run.outcome == 'failure' }}
+          details: ${{ steps.run.outputs.details }}
