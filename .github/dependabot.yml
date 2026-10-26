@@ -1,0 +1,17 @@
+# Weekly, grouped, and never for versions younger than a week: new releases are where most
+# supply-chain compromises are caught and pulled, and a grouped PR is one review, not ten.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    groups:
+      minor-and-patch: { update-types: [minor, patch] }
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    groups:
+      actions: { patterns: ["*"] }
