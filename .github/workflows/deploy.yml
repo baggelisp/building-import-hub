@@ -1,0 +1,79 @@
+name: Deploy
+
+# Every push to main that passes CI is deployed: database first, then the Edge Function, then the
+# site. Order matters: the site may call function behaviour or columns that only exist after the
+# backend steps, never the other way round, so a failure part-way leaves a working older frontend.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false # never interrupt a migration
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: supabase/setup-cli@v3.0.1
+        with:
+          version: 2.62.10
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build the site first, so a broken build changes nothing
+        run: |
+          npm install -g npm@11.6.2
+          npm ci
+          npm run build
+          grep -q "connect-src 'self' ${VITE_SUPABASE_URL}" dist/client/index.html \
+            || { echo "::error::Bundle CSP does not target ${VITE_SUPABASE_URL}"; exit 1; }
+
+      - name: Link the Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Apply migrations
+        run: supabase db push --include-all
+
+      - name: Deploy Edge Functions
+        run: supabase functions deploy import-buildings --use-api --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy the site
+        uses: FirebaseExtended/action-hosting-deploy@v0.11.0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ vars.FIREBASE_PROJECT_ID }}
+          channelId: live
+
+      - name: Smoke test the live site
+        env:
+          SITE: https://${{ vars.FIREBASE_PROJECT_ID }}.web.app
+        run: |
+          set -euo pipefail
+          headers=$(curl -fsSI "$SITE/buildings")
+          grep -qi '^x-frame-options: DENY' <<<"$headers"
+          grep -qi '^cache-control: no-cache' <<<"$headers"
+          curl -fsS "$SITE/" | grep -q 'http-equiv="Content-Security-Policy"'
+          # The import endpoint must refuse anonymous callers.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "apikey: $VITE_SUPABASE_PUBLISHABLE_KEY" "$VITE_SUPABASE_URL/functions/v1/import-buildings")
+          test "$code" = 401
