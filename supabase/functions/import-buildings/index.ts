@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
   const origin = req.headers.get("Origin");
   if (req.method === "OPTIONS")
     return new Response(null, { status: 204, headers: corsHeaders(origin) });
-  if (req.method !== "POST") return json({ error: "Method not allowed." }, 405, origin);
+  if (req.method !== "POST") return json({ error: "Use POST." }, 405, origin);
 
   // --- Authenticate: verify the JWT signature and expiry, take the user id from it. ---
   const token = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");

@@ -129,7 +129,7 @@ describe("validateRow", () => {
     expect(r).toEqual({
       ok: false,
       row: 7,
-      errors: [{ row: 7, field: "floors", message: "Floors must be a whole number." }],
+      errors: [{ row: 7, field: "floors", message: "Floors should be a whole number, like 12." }],
     });
   });
 
@@ -170,7 +170,7 @@ describe("analyzeRows", () => {
   const rows = [
     { name: "Acropolis Tower", address: "1 Main St", city: "Athens" },
     { name: "", address: "", city: "" }, // blank row: skipped silently
-    { name: "acropolis tower", address: "1 main st", city: "athens" }, // duplicate of row 2
+    { name: "acropolis tower", address: "1 main st", city: "athens" }, // same building as row 2, different casing
     { name: "Harbour House", floors: "many" }, // invalid
     { name: "Old Mill", city: "Patras" }, // already exists
     { name: "New Wing" },
@@ -185,7 +185,7 @@ describe("analyzeRows", () => {
       [7, "New Wing"],
     ]);
     expect(a.errors).toEqual([
-      { row: 5, field: "floors", message: "Floors must be a whole number." },
+      { row: 5, field: "floors", message: "Floors should be a whole number, like 12." },
     ]);
     expect(a.duplicates).toEqual([
       { row: 4, name: "acropolis tower", reason: "in_file" },

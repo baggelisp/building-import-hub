@@ -1,5 +1,5 @@
-// Domain rules for buildings, shared by the import Edge Function (Deno) and the web app (Vite).
-// Pure TypeScript with no imports, so both runtimes and the unit tests load the same file.
+// The single definition of what a valid building is. Deno (the import function), Vite (the app)
+// and Vitest all load this file directly, which is why it must not import anything.
 
 export const BUILDING_FIELDS = [
   "name",
@@ -207,13 +207,13 @@ export function validateRow(
   if (text.name === null) fail("name", "Name is required.");
 
   const floors = parseWholeNumber(pick("floors"));
-  if (floors === "invalid") fail("floors", "Floors must be a whole number.");
+  if (floors === "invalid") fail("floors", "Floors should be a whole number, like 12.");
   else if (floors !== null && (floors < LIMITS.floors.min || floors > LIMITS.floors.max)) {
     fail("floors", `Floors must be between ${LIMITS.floors.min} and ${LIMITS.floors.max}.`);
   }
 
   const year = parseWholeNumber(pick("year_built"));
-  if (year === "invalid") fail("year_built", "Year built must be a whole number.");
+  if (year === "invalid") fail("year_built", "Year built should be a whole number, like 1998.");
   else if (year !== null && (year < LIMITS.yearBuilt.min || year > LIMITS.yearBuilt.max)) {
     fail(
       "year_built",
@@ -242,7 +242,8 @@ export function isBlankRow(raw: Record<string, unknown>): boolean {
 }
 
 /**
- * Identity used to detect duplicates: same name, address and city, ignoring case and spacing.
+ * Two rows describe the same building when this string matches: name, address and city with
+ * case and runs of whitespace normalised.
  * Must stay in sync with the generated `dedupe_key` column in the database migration.
  */
 export function dedupeKey(b: Pick<BuildingInput, "name" | "address" | "city">): string {
