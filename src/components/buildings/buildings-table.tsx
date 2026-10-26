@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Search, Trash2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +22,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Building } from "@/lib/buildings-api";
-import { BUILDING_FIELDS, FIELD_LABELS, type BuildingField } from "@shared/buildings";
+import {
+  BUILDING_FIELDS,
+  FIELD_LABELS,
+  type BuildingField,
+  type BuildingInput,
+} from "@shared/buildings";
+import { EditRow } from "./edit-row";
 
 type Sort = { field: BuildingField; dir: "asc" | "desc" } | null;
 const NUMERIC: BuildingField[] = ["floors", "year_built"];
@@ -42,14 +48,17 @@ function compare(a: Building, b: Building, field: BuildingField): number {
 type Props = {
   buildings: Building[];
   onDelete: (ids: string[]) => Promise<void>;
+  onUpdate: (id: string, value: BuildingInput) => Promise<void>;
   deleting: boolean;
 };
 
-export function BuildingsTable({ buildings, onDelete, deleting }: Props) {
+export function BuildingsTable({ buildings, onDelete, onUpdate, deleting }: Props) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<string[] | null>(null);
+  // One row at a time: editing is for corrections, bulk changes go through a re-import.
+  const [editing, setEditing] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -157,7 +166,7 @@ export function BuildingsTable({ buildings, onDelete, deleting }: Props) {
                   </button>
                 </TableHead>
               ))}
-              <TableHead className="w-12" />
+              <TableHead className="w-20" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -173,42 +182,64 @@ export function BuildingsTable({ buildings, onDelete, deleting }: Props) {
                 </TableCell>
               </TableRow>
             ) : (
-              visible.map((b) => (
-                <TableRow key={b.id} data-state={selected.has(b.id) ? "selected" : undefined}>
-                  <TableCell>
-                    <Checkbox
-                      checked={selected.has(b.id)}
-                      onCheckedChange={(on) => toggle(b.id, on === true)}
-                      aria-label={`Select ${b.name}`}
-                    />
-                  </TableCell>
-                  {BUILDING_FIELDS.map((f) => (
-                    <TableCell
-                      key={f}
-                      className={
-                        f === "name"
-                          ? "font-medium"
-                          : NUMERIC.includes(f)
-                            ? "text-right tabular-nums"
-                            : undefined
-                      }
-                    >
-                      {b[f] ?? <span className="text-muted-foreground/50">—</span>}
+              visible.map((b) =>
+                editing === b.id ? (
+                  <EditRow
+                    key={b.id}
+                    building={b}
+                    onCancel={() => setEditing(null)}
+                    onSave={async (value) => {
+                      await onUpdate(b.id, value);
+                      setEditing(null);
+                    }}
+                  />
+                ) : (
+                  <TableRow key={b.id} data-state={selected.has(b.id) ? "selected" : undefined}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(b.id)}
+                        onCheckedChange={(on) => toggle(b.id, on === true)}
+                        aria-label={`Select ${b.name}`}
+                      />
                     </TableCell>
-                  ))}
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                      onClick={() => setConfirming([b.id])}
-                      aria-label={`Delete ${b.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
+                    {BUILDING_FIELDS.map((f) => (
+                      <TableCell
+                        key={f}
+                        className={
+                          f === "name"
+                            ? "font-medium"
+                            : NUMERIC.includes(f)
+                              ? "text-right tabular-nums"
+                              : undefined
+                        }
+                      >
+                        {b[f] ?? <span className="text-muted-foreground/50">—</span>}
+                      </TableCell>
+                    ))}
+                    <TableCell className="whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground"
+                        onClick={() => setEditing(b.id)}
+                        disabled={editing !== null}
+                        aria-label={`Edit ${b.name}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => setConfirming([b.id])}
+                        aria-label={`Delete ${b.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ),
+              )
             )}
           </TableBody>
         </Table>

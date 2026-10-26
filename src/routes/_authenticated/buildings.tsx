@@ -7,7 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { BuildingsTable } from "@/components/buildings/buildings-table";
 import { ImportDialog, importToast } from "@/components/buildings/import-dialog";
 import { Button } from "@/components/ui/button";
-import { deleteBuildings, fetchBuildings } from "@/lib/buildings-api";
+import { deleteBuildings, fetchBuildings, updateBuilding } from "@/lib/buildings-api";
 import { downloadTemplate, exportBuildings } from "@/lib/excel";
 
 const buildingsQuery = queryOptions({ queryKey: ["buildings"], queryFn: fetchBuildings });
@@ -91,6 +91,11 @@ function BuildingsPage() {
         <BuildingsTable
           buildings={buildings}
           onDelete={(ids) => remove.mutateAsync(ids).then(() => undefined)}
+          onUpdate={async (id, value) => {
+            await updateBuilding(id, value);
+            toast.success(`Saved “${value.name}”.`);
+            await qc.invalidateQueries({ queryKey: ["buildings"] });
+          }}
           deleting={remove.isPending}
         />
       </main>

@@ -24,6 +24,16 @@ export async function fetchBuildings(): Promise<Building[]> {
   }
 }
 
+/** Saves edited values. The database enforces the same rules (CHECK and unique constraints). */
+export async function updateBuilding(id: string, value: BuildingInput): Promise<void> {
+  const { error } = await supabase.from("buildings").update(value).eq("id", id);
+  if (!error) return;
+  if (error.code === "23505") {
+    throw new Error("Another building already has this name, address and city.");
+  }
+  throw new Error(error.message);
+}
+
 export async function deleteBuildings(ids: string[]): Promise<void> {
   const { error } = await supabase.from("buildings").delete().in("id", ids);
   if (error) throw error;
