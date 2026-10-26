@@ -90,17 +90,53 @@ _Auth._
 - The `.env` committed in the original repository pointed at Lovable's backend. I removed it
   and added `.env.example` in its place.
 
-**Automation.**
+**Delivery.** The pipeline is built around one question: _what exactly reaches users, and
+when was that exact thing last tested?_
 
-- Every pull request triggers `ci.yml`:
-  - format, lint and type checks;
-  - unit tests;
-  - the Edge Function's `deno check`/`lint`;
-  - the vendored-library checksum;
+- **Every pull request gets a real deployment.** CI runs:
+  - format, lint and type checks, unit tests, and the Edge Function checks;
   - all migrations on an empty Postgres plus the pgTAP suite;
-  - Playwright against the Firebase emulator.
-- `deploy.yml` runs CI on `main`, then deploys in a fixed order: migrations, Edge Function,
-  site, and finally a few HTTP probes of the live URL (headers, CSP, 401 for anonymous import calls).
+  - Playwright on the Firebase emulator.
+
+  The same build then goes to a Firebase _preview channel_ of its own (`pr-<n>`, expires after
+  7 days) on real Hosting. The full e2e suite runs there, and the URL is posted on the PR. A
+  reviewer can click the change instead of imagining it.
+
+- **Migrations are reviewed by a machine first.** A migration that is already on `main` can
+  never be edited, renamed or deleted. New migrations must pass Squawk, which flags table locks,
+  missing lock timeouts and destructive changes. The two migrations that predate the linter are
+  baselined, with the reason written down.
+- **Build once, test the artifact, release the same artifact.** On `main`, CI packs the site
+  into a reproducible tarball and signs a build-provenance attestation for it. The release job:
+  1. verifies that attestation, so only bytes built by this repository's CI from this commit
+     can be deployed;
+  2. applies migrations and deploys the Edge Function;
+  3. publishes the site to a `candidate` channel and runs the smoke suite against it;
+  4. promotes _that same Hosting version_ to live through the Hosting API, with no rebuild and
+     no second upload;
+  5. probes live and runs the smoke suite again. If either fails, the previous live version is
+     restored automatically.
+- **No stored cloud keys.** GitHub's OIDC token is exchanged through Workload Identity
+  Federation for a short-lived token of a service account that has Hosting roles only. The
+  identity provider accepts tokens from this repository's numeric id and nothing else, so a different repository that later takes this name (for example after a deletion) gets nothing.
+- **Production keeps being checked after it ships.**
+  - Every 6 hours, the smoke suite signs in to the live app and imports, searches, deletes and
+    exports. On the free plan this also keeps the Supabase project from pausing after a week
+    of inactivity, which would otherwise greet a reviewer with a dead backend.
+  - Every night, a drift check compares the live migration history, the live schema (`supabase
+db diff`) and the security-relevant auth settings against the repository.
+  - Each check owns one GitHub issue: a failure opens it, and the next pass closes it.
+- **Tests that can share a world.** Previews, release candidates and the monitor use one test
+  account and can run at the same moment. Every e2e test works only on rows carrying its own
+  random tag and deletes exactly those. I verified this by running two full suites against
+  production simultaneously.
+- **Hygiene.** The workflows are linted (actionlint and shellcheck). The bundle is scanned for
+  secret-key shapes. Dependabot groups updates and ignores releases younger than a week.
+
+**What I deliberately did not build.** A separate staging project would mostly duplicate what
+per-PR previews plus a tested candidate already give, at the cost of a second backend to keep
+in sync. The free tier allows only two Supabase projects. If the team needed staging data
+isolation, that is where I would spend the second project.
 
 ## 3. Beyond getting it running
 
@@ -222,7 +258,8 @@ At the time of writing:
 With more time I would:
 
 - run the AI eval across several repetitions and tune the prompt against it;
-- add a staging project so migrations meet real data before production;
+- give previews their own database (Supabase branching, a paid feature) so a PR's migration can
+  be exercised end to end before merge, not only on an empty Postgres;
 - turn on point-in-time backups, which the free tier lacks;
 - let users reset their own password, which needs an email provider beyond the free tier's test sender;
 - add per-account rate limits on the import endpoint.
