@@ -3,8 +3,8 @@
 // TanStack Start's prerendered shell carries small inline bootstrap scripts whose content can
 // change between builds, so a hand-written policy would break silently. This script hashes the
 // inline scripts actually present in this build and allows exactly those, so the policy needs
-// no 'unsafe-inline' for scripts. frame-ancestors cannot be set from <meta>; firebase.json sends
-// it (and the other security headers) as real HTTP headers.
+// no 'unsafe-inline' for scripts. The <meta> form ignores frame-ancestors, so clickjacking
+// protection is a real response header instead (see firebase.json).
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadEnv } from "vite";

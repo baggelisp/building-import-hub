@@ -1,8 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
-// Both values are public by design: the publishable key only identifies the project, and
-// every table is protected by row-level security. They are inlined by Vite at build time.
+// Both values are public by design: the publishable key only identifies the project, and what
+// a caller may touch is decided by row-level security in Postgres. Vite inlines both at build
+// time.
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 

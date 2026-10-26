@@ -81,7 +81,7 @@ function AuthPage() {
           Sign in
         </Button>
         <p className="text-center text-xs text-muted-foreground">
-          Accounts are created by an administrator. Ask yours for access.
+          No account yet? Access is granted by the project owner.
         </p>
       </form>
     </div>

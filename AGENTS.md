@@ -1,11 +1,12 @@
 # Agent notes
 
-- The frontend is a static SPA (TanStack Start in SPA mode, see `vite.config.ts`) deployed to
-  Firebase Hosting. There is no runtime server: do not add `createServerFn`, server routes or
-  request middleware. Server-side logic belongs in Supabase (Postgres + RLS, Edge Functions).
+- `npm run build` emits static files only (`vite.config.ts` turns on TanStack Start's SPA mode);
+  Firebase Hosting serves them. Nothing executes on a server at request time, so `createServerFn`, API
+  routes and request middleware have nowhere to run.
+  Server-side logic belongs in Supabase (Postgres + RLS, Edge Functions).
 - Pages render only in the browser (`<ClientOnly>` around the root `<Outlet />`). Keep the root
   `head` static: the prerendered shell is served for every path.
-- The Excel import is the `import-buildings` Edge Function (`supabase/functions/import-buildings`).
+- Spreadsheet parsing, mapping and inserting happen in `supabase/functions/import-buildings`.
   Domain rules shared by the function, the web app and the tests live in
   `supabase/functions/_shared/` (imported in the app as `@shared/*`); keep them dependency-free.
 - Schema changes are SQL migrations in `supabase/migrations`, applied with `supabase db push`.

@@ -17,7 +17,7 @@ export async function downloadTemplate() {
   writeFile(book, "buildings-template.xlsx");
 }
 
-/** Exports with the template's columns, so an exported file can be edited and imported again. */
+/** Same header row as the template, so an export is itself a valid import file (round trip). */
 export async function exportBuildings(buildings: Building[]) {
   const { utils, writeFile } = await loadXlsx();
   const rows = buildings.map((b) => Object.fromEntries(BUILDING_FIELDS.map((f) => [f, b[f]])));
