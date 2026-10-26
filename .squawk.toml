@@ -1,0 +1,17 @@
+# Migration linter (https://squawkhq.com). CI runs it on migrations added in a pull request.
+pg_version = "17.0"
+# `supabase db push` wraps each migration file in a transaction.
+assume_in_transaction = true
+excluded_rules = [
+  # Each migration runs exactly once inside a transaction, so IF [NOT] EXISTS guards add nothing.
+  "prefer-robust-stmts",
+  # Floors and years are small numbers; int is the right type, bigint would be noise.
+  "prefer-bigint-over-int",
+]
+# Baseline: these were applied to production before the linter existed, while the table was
+# empty, so their locks were harmless. They are never edited again (CI rejects edits to applied
+# migrations), so linting them would only produce permanent noise.
+excluded_paths = [
+  "*20261021132000_create_buildings.sql",
+  "*20261026090000_harden_buildings.sql",
+]
